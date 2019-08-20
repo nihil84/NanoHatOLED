@@ -65,7 +65,7 @@ void log2file(const char *fmt, ...)
 }
 //}}
 
-const char* python_file = "bakebit_nanohat_oled.py";
+const char* python_file = "srvmon_nanohat_oled.py";
 static int get_work_path(char* buff, int maxlen) {
     ssize_t len = readlink("/proc/self/exe", buff, maxlen);
     if (len == -1 || len == maxlen) {                         
@@ -116,7 +116,7 @@ void* threadfunc(char* arg) {
 int load_python_view() {
     int ret;
     char* cmd = (char*)malloc(255);
-    sprintf(cmd, "cd %s/BakeBit/Software/Python && python %s 2>&1 | tee /tmp/nanoled-python.log", workpath, python_file);
+    sprintf(cmd, "cd %s/Source && python %s 2>&1 | tee /tmp/nanoled-python.log", workpath, python_file);
     ret = pthread_create(&view_thread_id, NULL, (void*)threadfunc,cmd);
     if(ret) {
         log2file("create pthread error \n");
