@@ -54,6 +54,7 @@ width = 128
 height = 64
 
 showPageIndicator = False
+pageCount = 2
 done = False
 
 oled.init()  #initialze SEEED OLED display
@@ -102,11 +103,21 @@ class RebootSystem(Command):
         os.system('systemctl reboot')
 
 class Page(object):
+    pageCount = 0
     fontb24 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono-Bold.ttf', 24);
     font14 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono.ttf', 14);
     smartFont = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono-Bold.ttf', 10);
     fontb14 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono-Bold.ttf', 14);
     font11 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono.ttf', 11);
+
+    def __init__(self, showPageIndicator):
+        if showPageIndicator:
+            self.showPageIndicator = True
+            self.page_index = Page.pageCount
+            Page.pageCount += 1
+            print type(self).__name__ + ": " + str(self.page_index) + " of " + str(Page.pageCount)
+        else:
+            self.showPageIndicator = False
 
     def setNextPage(self, nextPage):
         self.nextPage = nextPage
@@ -132,11 +143,29 @@ class Page(object):
         # Call specific draw of the subclass
         self._doDraw()
 
+        if self.showPageIndicator:
+            self._drawPageIndicator(draw)
+    
         oled.drawImage(image)
 
         lock.acquire()
         drawing = False
         lock.release()
+
+    def _drawPageIndicator(self, painter): 
+        global width
+        global height
+        dotWidth=4
+        dotPadding=2
+        dotX=width-dotWidth-1
+        #dotTop=(height-pageCount*dotWidth-(pageCount-1)*dotPadding)/2
+        dotTop=0
+        for i in range(self.pageCount):
+            if i==self.page_index:
+                painter.rectangle((dotX, dotTop, dotX+dotWidth, dotTop+dotWidth), outline=255, fill=255)
+            else:
+                painter.rectangle((dotX, dotTop, dotX+dotWidth, dotTop+dotWidth), outline=255, fill=0)
+            dotTop=dotTop+dotWidth+dotPadding
 
     def onModePressed(self):
         print 'switching from ' + type(self).__name__ + ' to ' + type(self.nextPage).__name__
@@ -185,7 +214,8 @@ class DiagnosticsPage(Page):
         draw.text((x, top+5+48),    tempStr,  font=self.smartFont, fill=255)
 
 class SystemPage(Page):
-    def __init__(self):
+    def __init__(self, showPageIndicator):
+        super(SystemPage, self).__init__(showPageIndicator)
         self.selection = 0
         self.haltCommand = HaltSystem(self)
         self.rebootCommand = RebootSystem(self)
@@ -219,6 +249,7 @@ class SystemPage(Page):
 
 class ConfirmPage(Page):
     def __init__(self):
+        super(ConfirmPage, self).__init__(False)
         self.selection = 0
 
     def _doDraw(self):
@@ -252,6 +283,8 @@ class ConfirmPage(Page):
             switchPage(self.command.backPage)
 
 class ShutdownPage(Page):
+    def __init__(self):
+        super(ShutdownPage, self).__init__(False)
 
     def _doDraw(self):
         draw.text((2, 2),  'Shutting down',  font=self.fontb14, fill=255)
@@ -384,8 +417,8 @@ def exit_gracefully(signum, stack):
     global done
     done = True
 
-diagnosticsPage = DiagnosticsPage()
-systemPage = SystemPage()
+diagnosticsPage = DiagnosticsPage(True)
+systemPage = SystemPage(True)
 confirmPage = ConfirmPage()
 shutdownPage = ShutdownPage()
 
