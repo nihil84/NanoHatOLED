@@ -34,7 +34,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 '''
 
-global BAKEBIT_PATH
 BAKEBIT_PATH='../BakeBit/Software/Python'
 
 import sys
@@ -51,41 +50,20 @@ import signal
 import os
 import socket
 
-global width
-width=128
-global height
-height=64
+width = 128
+height = 64
 
-global pageCount
-pageCount=2
-global pageIndex
-pageIndex=0
-global showPageIndicator
-showPageIndicator=False
+showPageIndicator = False
+done = False
 
 oled.init()  #initialze SEEED OLED display
 oled.setNormalDisplay()      #Set display to normal mode (i.e non-inverse mode)
 oled.setHorizontalMode()
 
-global drawing 
-drawing = False
-
-global image
 image = Image.new('1', (width, height))
-global draw
 draw = ImageDraw.Draw(image)
-global fontb24
-fontb24 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono-Bold.ttf', 24);
-global font14 
-font14 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono.ttf', 14);
-global smartFont
-smartFont = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono-Bold.ttf', 10);
-global fontb14
-fontb14 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono-Bold.ttf', 14);
-global font11
-font11 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono.ttf', 11);
 
-global lock
+drawing = False
 lock = threading.Lock()
 
 def get_ip():
@@ -99,6 +77,188 @@ def get_ip():
     finally:
         s.close()
     return IP
+
+class Command(object):
+    def __init__(self, backPage):
+        self.backPage = backPage
+
+    def run(self):
+        pass
+
+class HaltSystem(Command):
+    def run(self):
+        global oled
+        switchPage(shutdownPage)
+        time.sleep(1)
+        print 'Executing POWEROFF'
+        os.system('systemctl poweroff')
+
+class RebootSystem(Command):
+    def run(self):
+        global oled
+        switchPage(shutdownPage)
+        time.sleep(1)
+        print 'Executing REBOOT'
+        os.system('systemctl reboot')
+
+class Page(object):
+    fontb24 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono-Bold.ttf', 24);
+    font14 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono.ttf', 14);
+    smartFont = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono-Bold.ttf', 10);
+    fontb14 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono-Bold.ttf', 14);
+    font11 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono.ttf', 11);
+
+    def setNextPage(self, nextPage):
+        self.nextPage = nextPage
+
+    def draw(self):
+        global drawing
+        global oled
+        global width
+        global height
+        global image
+        global draw
+
+        lock.acquire()
+        if drawing:
+            lock.release()
+            return
+        drawing = True
+        lock.release()
+        
+        # Draw a black filled box to clear the image.            
+        draw.rectangle((0,0,width,height), outline=0, fill=0)
+        
+        # Call specific draw of the subclass
+        self._doDraw()
+
+        oled.drawImage(image)
+
+        lock.acquire()
+        drawing = False
+        lock.release()
+
+    def onModePressed(self):
+        print 'switching from ' + type(self).__name__ + ' to ' + type(self.nextPage).__name__
+        switchPage(self.nextPage)
+
+    def onOkPressed(self):
+        pass
+
+    def onSelectPressed(self):
+        pass
+
+class ClockPage(Page):
+    def _doDraw(self):
+        text = time.strftime("%A")
+        draw.text((2,2),text,font=self.font14,fill=255)
+        text = time.strftime("%e %b %Y")
+        draw.text((2,18),text,font=self.font14,fill=255)
+        text = time.strftime("%X")
+        draw.text((2,40),text,font=self.fontb24,fill=255)
+
+class DiagnosticsPage(Page):
+    def _doDraw(self):
+        # Draw some shapes.
+        # First define some constants to allow easy resizing of shapes.
+        padding = 1
+        top = padding
+        bottom = height-padding
+        # Move left to right keeping track of the current x position for drawing shapes.
+        x = 0
+	IPAddress = get_ip()
+        cmd = "top -bn1 | grep load | awk '{printf \"CPU Load: %.2f\", $(NF-2)}'"
+        CPU = subprocess.check_output(cmd, shell = True )
+        cmd = "free -m | awk 'NR==2{printf \"Mem: %s/%sMB %.2f%%\", $3,$2,$3*100/$2 }'"
+        MemUsage = subprocess.check_output(cmd, shell = True )
+        cmd = "df -h | awk '$NF==\"/\"{printf \"Disk: %d/%dGB %s\", $3,$2,$5}'"
+        Disk = subprocess.check_output(cmd, shell = True )
+        tempI = int(open('/sys/class/thermal/thermal_zone0/temp').read());
+        if tempI>1000:
+            tempI = tempI/1000
+        tempStr = "CPU TEMP: %sC" % str(tempI)
+
+        draw.text((x, top+5),       "IP: " + str(IPAddress),  font=self.smartFont, fill=255)
+        draw.text((x, top+5+12),    str(CPU), font=self.smartFont, fill=255)
+        draw.text((x, top+5+24),    str(MemUsage),  font=self.smartFont, fill=255)
+        draw.text((x, top+5+36),    str(Disk),  font=self.smartFont, fill=255)
+        draw.text((x, top+5+48),    tempStr,  font=self.smartFont, fill=255)
+
+class SystemPage(Page):
+    def __init__(self):
+        self.selection = 0
+        self.haltCommand = HaltSystem(self)
+        self.rebootCommand = RebootSystem(self)
+
+    def _doDraw(self):
+        draw.text((2, 2),  'System',  font=self.fontb14, fill=255)
+        
+        reboot_bg = 255 if self.selection==0 else 0
+        reboot_fg = 0 if self.selection==0 else 255
+        halt_bg = 255 if self.selection==1 else 0
+        halt_fg = 0 if self.selection==1 else 255
+
+        draw.rectangle((2,20,width-4,20+16), outline=0, fill=reboot_bg)
+        draw.text((4, 22),  'Reboot',  font=self.font11, fill=reboot_fg)
+
+        draw.rectangle((2,38,width-4,38+16), outline=0, fill=halt_bg)
+        draw.text((4, 40),  'Halt',  font=self.font11, fill=halt_fg)
+
+    def onModePressed(self):
+        self.selection = 0
+        super(SystemPage, self).onModePressed()
+    
+    def onSelectPressed(self):
+        self.selection = 1 if self.selection==0 else 0
+        self.draw()
+
+    def onOkPressed(self):
+        global confirmPage
+        confirmPage.setCommand(self.rebootCommand if self.selection==0 else self.haltCommand)
+        switchPage(confirmPage)
+
+class ConfirmPage(Page):
+    def __init__(self):
+        self.selection = 0
+
+    def _doDraw(self):
+        draw.text((2, 2),  'Confirm?',  font=self.fontb14, fill=255)
+
+        no_bg = 255 if self.selection==0 else 0
+        no_fg = 0 if self.selection==0 else 255
+        yes_bg = 255 if self.selection==1 else 0
+        yes_fg = 0 if self.selection==1 else 255
+
+        draw.rectangle((2,20,width-4,20+16), outline=0, fill=yes_bg)
+        draw.text((4, 22),  'Yes',  font=self.font11, fill=yes_fg)
+
+        draw.rectangle((2,38,width-4,38+16), outline=0, fill=no_bg)
+        draw.text((4, 40),  'No',  font=self.font11, fill=no_fg)
+
+    def setCommand(self, command):
+        self.command = command
+
+    def onModePressed(self):
+        pass
+
+    def onSelectPressed(self):
+        self.selection = 1 if self.selection==0 else 0
+        self.draw()
+
+    def onOkPressed(self):
+        if self.selection==1:
+            self.command.run()
+        else:
+            switchPage(self.command.backPage)
+
+class ShutdownPage(Page):
+
+    def _doDraw(self):
+        draw.text((2, 2),  'Shutting down',  font=self.fontb14, fill=255)
+        draw.text((2, 20),  'Please wait',  font=self.font11, fill=255)
+    
+    def onModePressed(self):
+        pass
 
 def draw_page():
     global drawing
@@ -205,104 +365,65 @@ def draw_page():
     lock.release()
 
 
-def is_showing_power_msgbox():
-    global pageIndex
+def process_button(signum, stack):
     lock.acquire()
-    page_index = pageIndex
+    page = currentPage
     lock.release()
-    if page_index==3 or page_index==4:
-        return True
-    return False
-
-
-def update_page_index(pi):
-    global pageIndex
-    lock.acquire()
-    pageIndex = pi
-    lock.release()
-
-def receive_signal(signum, stack):
-    global pageIndex
-
-    lock.acquire()
-    page_index = pageIndex
-    lock.release()
-
-    if page_index==5:
-        return
 
     if signum == signal.SIGUSR1:
-        print 'K1 pressed'
-        if is_showing_power_msgbox():
-            if page_index==3:
-                update_page_index(4)
-            else:
-                update_page_index(3)
-            draw_page()
-        else:
-            pageIndex=0
-            draw_page()
-
+        print 'MODE pressed'
+        page.onModePressed()
     if signum == signal.SIGUSR2:
-        print 'K2 pressed'
-        if is_showing_power_msgbox():
-            if page_index==4:
-                update_page_index(5)
-                draw_page()
- 
-            else:
-                update_page_index(0)
-                draw_page()
-        else:
-            update_page_index(1)
-            draw_page()
-
+        print 'SELECT pressed'
+        page.onSelectPressed()
     if signum == signal.SIGALRM:
-        print 'K3 pressed'
-        if is_showing_power_msgbox():
-            update_page_index(0)
-            draw_page()
-        else:
-            update_page_index(3)
-            draw_page()
+        print 'OK pressed'
+        page.onOkPressed()
 
+def exit_gracefully(signum, stack):
+    global done
+    done = True
+
+diagnosticsPage = DiagnosticsPage()
+systemPage = SystemPage()
+confirmPage = ConfirmPage()
+shutdownPage = ShutdownPage()
+
+diagnosticsPage.setNextPage(systemPage)
+systemPage.setNextPage(diagnosticsPage)
+
+currentPage = diagnosticsPage
 
 image0 = Image.open(BAKEBIT_PATH + '/friendllyelec.png').convert('1')
 oled.drawImage(image0)
 time.sleep(2)
 
-signal.signal(signal.SIGUSR1, receive_signal)
-signal.signal(signal.SIGUSR2, receive_signal)
-signal.signal(signal.SIGALRM, receive_signal)
+signal.signal(signal.SIGUSR1, process_button)
+signal.signal(signal.SIGUSR2, process_button)
+signal.signal(signal.SIGALRM, process_button)
+signal.signal(signal.SIGINT, exit_gracefully)
+signal.signal(signal.SIGTERM, exit_gracefully)
 
-while True:
+def switchPage(page):
+    global currentPage
+
+    lock.acquire()
+    currentPage = page
+    lock.release()
+
+    page.draw()
+
+while not done:
     try:
-        draw_page()
-
         lock.acquire()
-        page_index = pageIndex
+        page = currentPage
         lock.release()
 
-        if page_index==5:
-            time.sleep(2)
-            while True:
-                lock.acquire()
-                is_drawing = drawing
-                lock.release()
-                if not is_drawing:
-                    lock.acquire()
-                    drawing = True
-                    lock.release()
-                    oled.clearDisplay()
-                    break
-                else:
-                    time.sleep(.1)
-                    continue
-            time.sleep(1)
-            os.system('systemctl poweroff')
-            break
-        time.sleep(1)
+        page.draw()
+
     except KeyboardInterrupt:                                                                                                          
         break                     
-    except IOError:                                                                              
+    except IOError:
         print ("Error")
+
+oled.clearDisplay()

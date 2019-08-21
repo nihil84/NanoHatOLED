@@ -1,6 +1,6 @@
 
-NanoHatOLED: 
+NanoHatOLED: daemonize.c main.c
 	gcc daemonize.c main.c -lrt -lpthread -o NanoHatOLED
 
 install:
-	cp -f NanoHatOLED ../
+	mv -f NanoHatOLED ../
