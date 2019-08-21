@@ -102,6 +102,14 @@ class RebootSystem(Command):
         print 'Executing REBOOT'
         os.system('systemctl reboot')
 
+class ForceNetworkSettings(Command):
+    def run(self):
+        print 'Forcing network settings to 192.168.1.143 gw 192.168.1.1'
+        os.system('ifconfig eth0 192.168.1.143')
+        os.system('route add default gw 192.168.1.1')
+        time.sleep(1)
+        switchPage(diagnosticsPage)
+
 class Page(object):
     pageCount = 0
     fontb24 = ImageFont.truetype(BAKEBIT_PATH + '/DejaVuSansMono-Bold.ttf', 24);
@@ -158,7 +166,6 @@ class Page(object):
         dotWidth=4
         dotPadding=2
         dotX=width-dotWidth-1
-        #dotTop=(height-pageCount*dotWidth-(pageCount-1)*dotPadding)/2
         dotTop=0
         for i in range(self.pageCount):
             if i==self.page_index:
@@ -247,6 +254,22 @@ class SystemPage(Page):
         confirmPage.setCommand(self.rebootCommand if self.selection==0 else self.haltCommand)
         switchPage(confirmPage)
 
+class NetworkPage(Page):
+    def __init__(self, showPageIndicator):
+        super(NetworkPage, self).__init__(showPageIndicator)
+        self.netForceCommand = ForceNetworkSettings(self)
+
+    def _doDraw(self):
+        draw.text((2, 2),  'Network',  font=self.fontb14, fill=255)
+        
+        draw.rectangle((2,20,width-4,20+16), outline=0, fill=255)
+        draw.text((4, 22),  'Force settings',  font=self.font11, fill=0)
+
+    def onOkPressed(self):
+        global confirmPage
+        confirmPage.setCommand(self.netForceCommand)
+        switchPage(confirmPage)
+
 class ConfirmPage(Page):
     def __init__(self):
         super(ConfirmPage, self).__init__(False)
@@ -293,110 +316,6 @@ class ShutdownPage(Page):
     def onModePressed(self):
         pass
 
-def draw_page():
-    global drawing
-    global image
-    global draw
-    global oled
-    global font
-    global font14
-    global smartFont
-    global width
-    global height
-    global pageCount
-    global pageIndex
-    global showPageIndicator
-    global width
-    global height
-    global lock
-
-    lock.acquire()
-    is_drawing = drawing
-    page_index = pageIndex
-    lock.release()
-
-    if is_drawing:
-        return
-
-    lock.acquire()
-    drawing = True
-    lock.release()
-    
-    # Draw a black filled box to clear the image.            
-    draw.rectangle((0,0,width,height), outline=0, fill=0)
-    # Draw current page indicator
-    if showPageIndicator:
-        dotWidth=4
-        dotPadding=2
-        dotX=width-dotWidth-1
-        dotTop=(height-pageCount*dotWidth-(pageCount-1)*dotPadding)/2
-        for i in range(pageCount):
-            if i==page_index:
-                draw.rectangle((dotX, dotTop, dotX+dotWidth, dotTop+dotWidth), outline=255, fill=255)
-            else:
-                draw.rectangle((dotX, dotTop, dotX+dotWidth, dotTop+dotWidth), outline=255, fill=0)
-            dotTop=dotTop+dotWidth+dotPadding
-
-    if page_index==0:
-        text = time.strftime("%A")
-        draw.text((2,2),text,font=font14,fill=255)
-        text = time.strftime("%e %b %Y")
-        draw.text((2,18),text,font=font14,fill=255)
-        text = time.strftime("%X")
-        draw.text((2,40),text,font=fontb24,fill=255)
-    elif page_index==1:
-        # Draw some shapes.
-        # First define some constants to allow easy resizing of shapes.
-        padding = 1
-        top = padding
-        bottom = height-padding
-        # Move left to right keeping track of the current x position for drawing shapes.
-        x = 0
-	IPAddress = get_ip()
-        cmd = "top -bn1 | grep load | awk '{printf \"CPU Load: %.2f\", $(NF-2)}'"
-        CPU = subprocess.check_output(cmd, shell = True )
-        cmd = "free -m | awk 'NR==2{printf \"Mem: %s/%sMB %.2f%%\", $3,$2,$3*100/$2 }'"
-        MemUsage = subprocess.check_output(cmd, shell = True )
-        cmd = "df -h | awk '$NF==\"/\"{printf \"Disk: %d/%dGB %s\", $3,$2,$5}'"
-        Disk = subprocess.check_output(cmd, shell = True )
-        tempI = int(open('/sys/class/thermal/thermal_zone0/temp').read());
-        if tempI>1000:
-            tempI = tempI/1000
-        tempStr = "CPU TEMP: %sC" % str(tempI)
-
-        draw.text((x, top+5),       "IP: " + str(IPAddress),  font=smartFont, fill=255)
-        draw.text((x, top+5+12),    str(CPU), font=smartFont, fill=255)
-        draw.text((x, top+5+24),    str(MemUsage),  font=smartFont, fill=255)
-        draw.text((x, top+5+36),    str(Disk),  font=smartFont, fill=255)
-        draw.text((x, top+5+48),    tempStr,  font=smartFont, fill=255)
-    elif page_index==3: #shutdown -- no
-        draw.text((2, 2),  'Shutdown?',  font=fontb14, fill=255)
-
-        draw.rectangle((2,20,width-4,20+16), outline=0, fill=0)
-        draw.text((4, 22),  'Yes',  font=font11, fill=255)
-
-        draw.rectangle((2,38,width-4,38+16), outline=0, fill=255)
-        draw.text((4, 40),  'No',  font=font11, fill=0)
-
-    elif page_index==4: #shutdown -- yes
-        draw.text((2, 2),  'Shutdown?',  font=fontb14, fill=255)
-
-        draw.rectangle((2,20,width-4,20+16), outline=0, fill=255)
-        draw.text((4, 22),  'Yes',  font=font11, fill=0)
-
-        draw.rectangle((2,38,width-4,38+16), outline=0, fill=0)
-        draw.text((4, 40),  'No',  font=font11, fill=255)
-
-    elif page_index==5:
-        draw.text((2, 2),  'Shutting down',  font=fontb14, fill=255)
-        draw.text((2, 20),  'Please wait',  font=font11, fill=255)
-
-    oled.drawImage(image)
-
-    lock.acquire()
-    drawing = False
-    lock.release()
-
 
 def process_button(signum, stack):
     lock.acquire()
@@ -419,11 +338,13 @@ def exit_gracefully(signum, stack):
 
 diagnosticsPage = DiagnosticsPage(True)
 systemPage = SystemPage(True)
+networkPage = NetworkPage(True)
 confirmPage = ConfirmPage()
 shutdownPage = ShutdownPage()
 
 diagnosticsPage.setNextPage(systemPage)
-systemPage.setNextPage(diagnosticsPage)
+systemPage.setNextPage(networkPage)
+networkPage.setNextPage(diagnosticsPage)
 
 currentPage = diagnosticsPage
 
