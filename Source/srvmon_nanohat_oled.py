@@ -57,10 +57,6 @@ showPageIndicator = False
 pageCount = 2
 done = False
 
-oled.init()  #initialze SEEED OLED display
-oled.setNormalDisplay()      #Set display to normal mode (i.e non-inverse mode)
-oled.setHorizontalMode()
-
 image = Image.new('1', (width, height))
 draw = ImageDraw.Draw(image)
 
@@ -317,24 +313,46 @@ class ShutdownPage(Page):
         pass
 
 
-def process_button(signum, stack):
+def switchPage(page):
+    global currentPage
+
     lock.acquire()
-    page = currentPage
+    currentPage = page
     lock.release()
 
-    if signum == signal.SIGUSR1:
-        print 'MODE pressed'
-        page.onModePressed()
-    if signum == signal.SIGUSR2:
-        print 'SELECT pressed'
-        page.onSelectPressed()
-    if signum == signal.SIGALRM:
-        print 'OK pressed'
-        page.onOkPressed()
+    page.draw()
+
+def process_button(signum, stack):
+    global sleepMode
+    global lastInteraction
+
+    if sleepMode:
+        sleepMode = False
+    else:
+        lock.acquire()
+        page = currentPage
+        lock.release()
+
+        if signum == signal.SIGUSR1:
+            print 'MODE pressed'
+            page.onModePressed()
+        if signum == signal.SIGUSR2:
+            print 'SELECT pressed'
+            page.onSelectPressed()
+        if signum == signal.SIGALRM:
+            print 'OK pressed'
+            page.onOkPressed()
+
+    lastInteraction = time.time()
 
 def exit_gracefully(signum, stack):
     global done
     done = True
+
+def oled_init():
+    oled.init()  #initialze SEEED OLED display
+    oled.setNormalDisplay()      #Set display to normal mode (i.e non-inverse mode)
+    oled.setHorizontalMode()
 
 diagnosticsPage = DiagnosticsPage(True)
 systemPage = SystemPage(True)
@@ -347,7 +365,10 @@ systemPage.setNextPage(networkPage)
 networkPage.setNextPage(diagnosticsPage)
 
 currentPage = diagnosticsPage
+sleepMode = False
+lastInteraction = time.time()
 
+oled_init()
 image0 = Image.open(BAKEBIT_PATH + '/friendllyelec.png').convert('1')
 oled.drawImage(image0)
 time.sleep(2)
@@ -358,22 +379,21 @@ signal.signal(signal.SIGALRM, process_button)
 signal.signal(signal.SIGINT, exit_gracefully)
 signal.signal(signal.SIGTERM, exit_gracefully)
 
-def switchPage(page):
-    global currentPage
-
-    lock.acquire()
-    currentPage = page
-    lock.release()
-
-    page.draw()
 
 while not done:
     try:
-        lock.acquire()
-        page = currentPage
-        lock.release()
+        if not sleepMode:
+            lock.acquire()
+            page = currentPage
+            lock.release()
 
-        page.draw()
+            page.draw()
+            if time.time() - lastInteraction > 30:
+                print("Entering sleep mode")
+                sleepMode = True
+                oled.clearDisplay()
+        
+        time.sleep(1)
 
     except KeyboardInterrupt:                                                                                                          
         break                     
